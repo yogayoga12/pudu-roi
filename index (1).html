@@ -1,0 +1,795 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ロボット導入 ROI診断 | ニッシン・パーテクチュアル × PUDU ROBOTICS</title>
+<meta name="description" content="搬送・清掃ロボットの投資対効果を3ステップで診断。PUDU ROBOTICS T300/CC1の導入効果を可視化します。">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { overflow-y: scroll; }
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+  button { transition: all 0.15s ease; }
+  button:hover { opacity: 0.85; }
+  @media print { body { background: #fff !important; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+
+/* ===== Evidence-based presets ===== */
+/* Source: 財務省「法人企業統計調査」2024年度 製造業全規模 労働生産性995万円/年 ≈ 5,000円/h
+   中小企業白書2025: 中小企業の労働分配率≈80% → 付加価値 ≈ 人件費 × 1.25
+   経済構造実態調査2024: 製造業付加価値額110兆円、従業者数740万人 */
+
+const VALUE_PRESETS = [
+  { id: "general", label: "一般作業員", value: 2500, desc: "搬送・梱包・清掃等", source: "中小製造業平均（約500万円/年÷2,000h）" },
+  { id: "operator", label: "機械オペレーター", value: 3500, desc: "NC・プレス・成形機等の運転", source: "中小製造業 機械工（約700万円/年÷2,000h）" },
+  { id: "craftsman", label: "熟練技能者・エンジニア", value: 5000, desc: "金型・溶接・精密加工等の専門技能", source: "製造業全規模平均（995万円/年÷2,000h、法人企業統計2024）" },
+  { id: "multi", label: "多能工・高度技能者", value: 7000, desc: "5軸加工・放電加工・段取り多能工", source: "高付加価値製造業上位（約1,400万円/年÷2,000h）" },
+  { id: "sales", label: "営業・接客スタッフ", value: 4000, desc: "顧客対応・販売", source: "小売業・サービス業平均（約770万円/年÷2,000h、法人企業統計）" },
+  { id: "custom", label: "自分で入力する", value: 0, desc: "", source: "" },
+];
+
+const RECRUIT_PRESETS = [
+  { id: "low", label: "ハローワーク中心", cost: 100000, desc: "求人掲載無料＋面接等の内部コスト", source: "ハローワーク求人掲載は無料。内部コスト（担当者人件費・面接対応等）のみで約10万円（マイナビ中途採用状況調査2025）" },
+  { id: "mid", label: "求人媒体利用", cost: 290000, desc: "Indeed・タウンワーク等", source: "中途1人あたり平均採用コスト約28.9万円（マイナビ中途採用状況調査2024・2023年実績）" },
+  { id: "high", label: "人材紹介利用", cost: 900000, desc: "紹介手数料＝年収の30〜35%", source: "年収350万円の場合 手数料30%＝約105万円。中途平均80〜100万円（マイナビ中途採用状況調査2025・2024年実績）" },
+];
+
+const PAIN_POINTS = [
+  { id: "backpain", label: "腰痛・疲労", icon: "🏋️" },
+  { id: "hiring", label: "採用が困難", icon: "🔍" },
+  { id: "turnover", label: "高い離職率", icon: "🚪" },
+  { id: "overtime", label: "残業が発生", icon: "⏰" },
+  { id: "quality", label: "本業に集中できない", icon: "🎯" },
+  { id: "downtime", label: "機械の材料待ち", icon: "🏭" },
+  { id: "cost", label: "人件費の上昇", icon: "📊" },
+  { id: "hygiene", label: "清掃・衛生管理", icon: "🧹" },
+];
+
+const init = {
+  companyName: "", contactName: "", employeeCount: "",
+  robotType: "t300",  // "t300" or "cc1"
+  facilityType: "factory",
+  // T300 Factory
+  machineCount: "", callsPerDay: "4", fetchTimeMin: "10",
+  // T300 Warehouse
+  dailyOrders: "", transportTimeMin: "5",
+  // CC1
+  cleaningTimesPerDay: "2", cleaningMinPerTime: "30", cleaningArea: "",
+  // Common
+  staffCount: "", hourlyWage: "1800", workDays: "240",
+  // Layer 2
+  recruitPreset: "mid", turnoverRate: "15",
+  // Layer 3
+  valuePreset: "craftsman", customValue: "",
+  // Robot cost (営業担当入力 - 架台のみ)
+  rackCost: "",
+  t300Units: "1", cc1Units: "1",
+  pains: [], notes: "",
+};
+
+function calc(f) {
+  const isT300 = f.robotType === "t300";
+  const isFact = f.facilityType === "factory";
+  const wage = parseFloat(f.hourlyWage) || 1800;
+  const days = parseFloat(f.workDays) || 240;
+  const staff = parseFloat(f.staffCount) || 1;
+  const emp = parseFloat(f.employeeCount) || 20;
+  const vp = VALUE_PRESETS.find(v => v.id === f.valuePreset) || VALUE_PRESETS[2];
+  const valuePerH = f.valuePreset === "custom" ? (parseFloat(f.customValue) || 3000) : vp.value;
+  const rp = RECRUIT_PRESETS.find(r => r.id === f.recruitPreset) || RECRUIT_PRESETS[1];
+  const turnover = (parseFloat(f.turnoverRate) || 15) / 100;
+
+  let totalCalls, fetchMinDay, taskLabel;
+  if (isT300) {
+    taskLabel = "搬送";
+    if (isFact) {
+      const mc = parseFloat(f.machineCount) || 5;
+      const cpd = parseFloat(f.callsPerDay) || 4;
+      const ftm = parseFloat(f.fetchTimeMin) || 10;
+      totalCalls = mc * cpd;
+      fetchMinDay = totalCalls * ftm;
+    } else {
+      const ord = parseFloat(f.dailyOrders) || 0;
+      const ttm = parseFloat(f.transportTimeMin) || 5;
+      totalCalls = ord;
+      fetchMinDay = ord * ttm;
+    }
+  } else {
+    // CC1
+    taskLabel = "清掃";
+    const timesDay = parseFloat(f.cleaningTimesPerDay) || 2;
+    const minPer = parseFloat(f.cleaningMinPerTime) || 30;
+    totalCalls = timesDay;
+    fetchMinDay = timesDay * minPer;
+  }
+
+  const fetchHYear = fetchMinDay / 60 * days;
+
+  // L1
+  const l1_labor = Math.round(fetchHYear * wage * 1.15);
+  const l1 = l1_labor;
+  let l1_formulas;
+  if (isT300 && isFact) {
+    l1_formulas = [
+      { l: "1日の呼出し回数", f: `${f.machineCount}工程 × ${f.callsPerDay}回`, r: `${totalCalls}回/日` },
+      { l: "エンジニアの搬送時間削減", f: `${totalCalls}回 × ${f.fetchTimeMin}分 × ${days}日 ÷ 60`, r: `${Math.round(fetchHYear)}h/年`, n: "搬送所要時間には移動・積降ろし・立ち話等すべて含みます" },
+      { l: "人件費削減（社保15%込）", f: `${Math.round(fetchHYear)}h × ${fm(wage)}円 × 1.15`, r: `${fm(l1_labor)}円`, c: true, n: "社会保険料の事業主負担は法定福利費として給与の約15%（厚労省統計）" },
+    ];
+  } else if (isT300) {
+    l1_formulas = [
+      { l: "1日の搬送時間", f: `${f.dailyOrders}回 × ${f.transportTimeMin}分`, r: `${fetchMinDay}分/日`, n: "搬送所要時間には移動・積降ろし・立ち話等すべて含みます" },
+      { l: "年間搬送時間", f: `${(fetchMinDay/60).toFixed(1)}h × ${days}日`, r: `${Math.round(fetchHYear)}h/年` },
+      { l: "人件費削減（社保15%込）", f: `${Math.round(fetchHYear)}h × ${fm(wage)}円 × 1.15`, r: `${fm(l1_labor)}円`, c: true, n: "社会保険料の事業主負担は法定福利費として給与の約15%（厚労省統計）" },
+    ];
+  } else {
+    l1_formulas = [
+      { l: "1日の清掃時間", f: `${f.cleaningTimesPerDay}回/日 × ${f.cleaningMinPerTime}分`, r: `${fetchMinDay}分/日` },
+      { l: "年間清掃時間", f: `${(fetchMinDay/60).toFixed(1)}h × ${days}日`, r: `${Math.round(fetchHYear)}h/年` },
+      { l: "人件費削減（社保15%込）", f: `${Math.round(fetchHYear)}h × ${fm(wage)}円 × 1.15`, r: `${fm(l1_labor)}円`, c: true, n: "清掃スタッフの人件費＋社会保険料の事業主負担15%を削減" },
+    ];
+  }
+
+  // L2
+  const leavers = staff * turnover;
+  const recruitTotal = Math.round(leavers * rp.cost);
+  const trainCost = Math.round(leavers * 2 * 40 * (wage / 60) * 0.5);
+  const miscCost = Math.round(leavers * 50000);
+  const l2 = recruitTotal + trainCost + miscCost;
+  const l2_formulas = [
+    { l: "年間離職者数", f: `${staff}名 × ${(turnover*100).toFixed(0)}%`, r: `${leavers.toFixed(1)}名/年` },
+    { l: "① 採用コスト", f: `${fm(rp.cost)}円/人 × ${leavers.toFixed(1)}名`, r: `${fm(recruitTotal)}円`, c: true, n: rp.source },
+    { l: "② 教育コスト", f: `${leavers.toFixed(1)}名 × 2週 × 40h × 生産性50%`, r: `${fm(trainCost)}円`, c: true, n: "新人は教育期間中、既存社員の50%の生産性と想定（OJT中は指導者の生産性も低下）" },
+    { l: "③ 退職に伴う組織コスト", f: `${leavers.toFixed(1)}名 × 5万円`, r: `${fm(miscCost)}円`, c: true, n: "内訳：退職手続き事務1.5万円＋引継ぎ期間の生産性低下2万円＋残メンバーの負荷増・士気低下1.5万円（エン・ジャパン「退職コスト調査」等を参考に中小企業向けに保守的に算出）" },
+  ];
+
+  // L3
+  const l3 = Math.round(fetchHYear * valuePerH);
+  const realloc = isT300
+    ? (isFact ? "エンジニアが搬送→本来業務（加工・段取り等）に戻る" : "搬送→付加価値業務（接客・検品等）に転換")
+    : "清掃→付加価値業務（接客・製造・品質管理等）に転換";
+  const l3_formulas = [
+    { l: realloc, f: `年間 ${Math.round(fetchHYear)}時間が本来業務に戻る`, r: "" },
+    { l: "1時間あたり付加価値", f: `${vp.label}：${fm(valuePerH)}円/h`, r: "", n: vp.source || "手入力値" },
+    { l: "年間の付加価値創造額", f: `${Math.round(fetchHYear)}h × ${fm(valuePerH)}円/h`, r: `${fm(l3)}円`, c: true },
+  ];
+
+  const total = l1 + l2 + l3;
+
+  // Fixed pricing (税別)
+  const units = isT300 ? (parseFloat(f.t300Units) || 1) : (parseFloat(f.cc1Units) || 1);
+  const bodyPrice = isT300 ? 3700000 : 2950000;  // T300: 370万, CC1: 295万
+  const maintPack = 1200000;  // 5年保守パック: 120万
+  const rackPrice = (parseFloat(f.rackCost) || 0) * 10000;
+  const robotCost = (bodyPrice + maintPack) * units + rackPrice;  // 本体+保守+架台
+  const annualMaint = Math.round(maintPack * units / 5);  // 保守パック年換算
+  const annualCost = Math.round(bodyPrice * units / 5 + annualMaint + (rackPrice > 0 ? rackPrice / 5 : 0));
+  const brkMo = total > 0 && robotCost > 0 ? Math.ceil(robotCost / (total / 12)) : 0;
+
+  let cat = "5人以下", sub = 750, subW = 1000;
+  if (emp > 100) { cat = "101人以上"; sub = 8000; subW = 10000; }
+  else if (emp > 50) { cat = "51〜100人"; sub = 5000; subW = 6500; }
+  else if (emp > 20) { cat = "21〜50人"; sub = 3000; subW = 4000; }
+  else if (emp > 5) { cat = "6〜20人"; sub = 1500; subW = 2000; }
+
+  return { l1, l1_formulas, l2, l2_formulas, l3, l3_formulas, total, brkMo, fetchHYear: Math.round(fetchHYear), totalCalls, cat, sub, subW, fetchMinDay, robotCost, annualCost, annualMaint, bodyPrice, maintPack, rackPrice, units, taskLabel };
+}
+
+function fm(n) { return typeof n === "number" ? n.toLocaleString("ja-JP") : n; }
+
+/* ===== MAIN APP ===== */
+function encodeForm(f) {
+  const d = { ...f };
+  delete d.notes;  // 長文除外
+  return btoa(unescape(encodeURIComponent(JSON.stringify(d))));
+}
+function decodeForm(s) {
+  try { return JSON.parse(decodeURIComponent(escape(atob(s)))); } catch { return null; }
+}
+
+function App() {
+  const [step, setStep] = useState(0);
+  const [form, setForm] = useState(init);
+  const [salesMode, setSalesMode] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [showPinBox, setShowPinBox] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const SALES_PIN = "1973";
+  const s = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const tp = id => setForm(p => ({ ...p, pains: p.pains.includes(id) ? p.pains.filter(x => x !== id) : [...p.pains, id] }));
+
+  // URL復元（みのたんがリンクを開いた時に入力データを復元）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const d = params.get("d");
+    if (d) {
+      const restored = decodeForm(d);
+      if (restored) {
+        setForm(p => ({ ...p, ...restored }));
+        setStep(2);  // 直接ROI結果画面へ
+        window.history.replaceState({}, "", window.location.pathname);  // URLパラメータをクリア
+      }
+    }
+  }, []);
+
+  const roi = calc(form);
+  const isF = form.facilityType === "factory";
+  const isT300 = form.robotType === "t300";
+  const STEPS = ["基本情報", "お悩み・コスト", "ROI結果"];
+
+  // 診断結果URL生成
+  const getResultURL = () => {
+    const base = window.location.origin + window.location.pathname;
+    return base + "?d=" + encodeForm(form);
+  };
+
+  // メール送信（mailto）
+  const sendEmail = () => {
+    const url = getResultURL();
+    const subject = `【ROI診断結果】${form.companyName} 様`;
+    const body = [
+      `【ROI診断結果が届きました】`,
+      ``,
+      `会社名：${form.companyName}`,
+      `担当者：${form.contactName}`,
+      `従業員数：${form.employeeCount}名`,
+      `ロボット：${isT300 ? "T300 搬送ロボット" : "CC1 清掃ロボット"}`,
+      isT300 ? `施設：${isF ? "工場（呼出しボタン方式）" : "倉庫・店舗"}` : "",
+      ``,
+      `■ ROI試算結果`,
+      `LAYER 1（コスト削減）：${fm(roi.l1)}円/年`,
+      `LAYER 2（見えないコスト）：${fm(roi.l2)}円/年`,
+      `LAYER 3（人材の付加価値）：${fm(roi.l3)}円/年`,
+      `年間トータル価値：${fm(roi.total)}円/年`,
+      ``,
+      `■ 入力データ復元URL（クリックで開く）`,
+      url,
+      ``,
+      `↑このURLを開くとお客様の入力データが復元されます。`,
+      `PIN（1973）を入力 → 台数・架台を設定 → 提案書をダウンロード`,
+    ].filter(Boolean).join("\n");
+    window.open(`mailto:nakamura@pertechtual.co.jp?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+    setSent(true);
+  };
+
+  // LINEで送信
+  const sendLINE = () => {
+    const url = getResultURL();
+    const text = `【ROI診断結果】${form.companyName}様\nL1:${fm(roi.l1)}円 L2:${fm(roi.l2)}円 L3:${fm(roi.l3)}円\n合計:${fm(roi.total)}円/年\n\n復元URL:\n${url}`;
+    window.open(`https://line.me/R/share?text=${encodeURIComponent(text)}`);
+    setSent(true);
+  };
+
+  // URLコピー
+  const copyURL = () => {
+    navigator.clipboard.writeText(getResultURL()).then(() => { setCopied(true); setTimeout(() => setCopied(false), 3000); });
+  };
+
+  const canNext = () => {
+    if (step === 0) return form.companyName && form.employeeCount && form.staffCount && (isT300 ? (isF ? form.machineCount : form.dailyOrders) : form.cleaningTimesPerDay);
+    if (step === 1) return form.pains.length > 0;
+    return true;
+  };
+
+
+  return (
+    <div style={R.root}>
+      <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet" />
+      <header style={R.hdr}>
+        <div style={R.hdrIn}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <div style={R.logo}>🤖</div>
+            <div>
+              <div style={{ fontSize: 15, color: "#00BCD4", letterSpacing: 3, fontWeight: 700 }}>NISSIN PERTECHTUAL × PUDU ROBOTICS</div>
+              <div style={{ fontSize: 30, fontWeight: 900 }}>ロボット導入 ROI診断</div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div style={R.wrap}>
+        <div style={{ display: "flex", gap: 4, marginBottom: 28 }}>
+          {STEPS.map((st, i) => (
+            <div key={i} style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ height: 3, borderRadius: 2, marginBottom: 5, background: i <= step ? "#00BCD4" : "#2A3A54" }} />
+              <div style={{ fontSize: 15, color: i <= step ? "#00BCD4" : "#556677", fontWeight: i === step ? 700 : 400 }}>{i + 1}. {st}</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={R.card}>
+
+          {/* STEP 0: Basic + Robot Type + Operations */}
+          {step === 0 && <div>
+            <ST n="01" t="基本情報" />
+
+            {/* Robot Type Selector */}
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 16, color: "#8899AA", display: "block", marginBottom: 8 }}>ロボットタイプ</label>
+              <div style={{ display: "flex", gap: 10 }}>
+                {[
+                  { v: "t300", l: "🚛 T300 搬送ロボット", d: "最大300kg搬送・リフティング・追従", price: "本体370万＋5年保守120万（税別）" },
+                  { v: "cc1", l: "🧹 CC1 清掃ロボット", d: "掃除＋モップ＋吸引＋UV殺菌", price: "本体295万＋5年保守120万（税別）" },
+                ].map(t => (
+                  <button key={t.v} onClick={() => s("robotType", t.v)} style={{
+                    flex: 1, padding: "14px 12px", borderRadius: 10, border: `2px solid ${form.robotType === t.v ? "#00BCD4" : "#2A3A54"}`,
+                    background: form.robotType === t.v ? "rgba(0,188,212,0.1)" : "transparent",
+                    color: form.robotType === t.v ? "#00BCD4" : "#8899AA", cursor: "pointer", textAlign: "left"
+                  }}>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>{t.l}</div>
+                    <div style={{ fontSize: 14, color: "#667788", marginTop: 3 }}>{t.d}</div>
+                    {salesMode && <div style={{ fontSize: 13, color: "#4CAF50", marginTop: 4, fontWeight: 600 }}>{t.price}</div>}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <G>
+              <F l="会社名" req v={form.companyName} set={v => s("companyName", v)} ph="株式会社○○" />
+              <F l="ご担当者名" v={form.contactName} set={v => s("contactName", v)} ph="山田 太郎" />
+              <F l="従業員数（パート含む）" req v={form.employeeCount} set={v => s("employeeCount", v)} ph="20" sf="名" tp="number" />
+              <F l={isT300 ? "搬送スタッフ数" : "清掃スタッフ数"} req v={form.staffCount} set={v => s("staffCount", v)} ph="3" sf="名" tp="number" />
+              <div>
+                <F l={`${isT300 ? "搬送" : "清掃"}スタッフの平均時給`} v={form.hourlyWage} set={v => s("hourlyWage", v)} ph="1800" sf="円" tp="number" />
+                <div style={{ fontSize: 14, color: "#667788", marginTop: 4, fontStyle: "italic" }}>
+                  📊 埼玉県最低賃金1,141円（2025年11月〜）。中小製造業スタッフ平均1,500〜2,000円（厚労省 毎月勤労統計2024）
+                </div>
+              </div>
+              <div>
+                <F l="年間稼働日数" v={form.workDays} set={v => s("workDays", v)} ph="240" sf="日" tp="number" />
+                <div style={{ fontSize: 14, color: "#667788", marginTop: 4, fontStyle: "italic" }}>
+                  💡 年間休日120日＋有休消化5日＝125日休 → 稼働240日
+                </div>
+              </div>
+            </G>
+
+            {/* T300: facility type + transport inputs */}
+            {isT300 ? (<div style={{ marginTop: 16 }}>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 16, color: "#8899AA", display: "block", marginBottom: 8 }}>施設タイプ</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[
+                    { v: "factory", l: "🏭 工場", d: "呼出しボタンで各工程へ" },
+                    { v: "warehouse", l: "📦 倉庫・店舗・施設", d: "ピッキング→出荷エリアへ" },
+                  ].map(t => (
+                    <button key={t.v} onClick={() => s("facilityType", t.v)} style={{
+                      flex: 1, padding: "10px", borderRadius: 8, border: `2px solid ${form.facilityType === t.v ? "#00BCD4" : "#2A3A54"}`,
+                      background: form.facilityType === t.v ? "rgba(0,188,212,0.1)" : "transparent",
+                      color: form.facilityType === t.v ? "#00BCD4" : "#8899AA", cursor: "pointer", textAlign: "center"
+                    }}>
+                      <div style={{ fontSize: 16, fontWeight: 700 }}>{t.l}</div>
+                      <div style={{ fontSize: 13, color: "#667788", marginTop: 2 }}>{t.d}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {isF ? (
+                <div>
+                  <G>
+                    <F l="工程数" req v={form.machineCount} set={v => s("machineCount", v)} ph="5" sf="工程" tp="number" />
+                    <F l="1工程あたりの搬送回数/日" v={form.callsPerDay} set={v => s("callsPerDay", v)} ph="4" sf="回" tp="number" />
+                  </G>
+                  <div style={{ marginTop: 10 }}>
+                    <F l="搬送1回の所要時間（往復）" v={form.fetchTimeMin} set={v => s("fetchTimeMin", v)} ph="10" sf="分" tp="number" />
+                    <div style={{ fontSize: 14, color: "#667788", marginTop: 4, fontStyle: "italic" }}>
+                      💡 移動＋積み降ろし＋伝票確認＋途中の立ち話や相談も含めた「持ち場を離れている総時間」
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <G>
+                  <F l="1日の搬送回数" req v={form.dailyOrders} set={v => s("dailyOrders", v)} ph="30" sf="回" tp="number" />
+                  <div>
+                    <F l="搬送1回の所要時間（往復）" v={form.transportTimeMin} set={v => s("transportTimeMin", v)} ph="5" sf="分" tp="number" />
+                    <div style={{ fontSize: 14, color: "#667788", marginTop: 4, fontStyle: "italic" }}>
+                      💡 移動＋積み降ろし＋途中の立ち話等を含めた総時間
+                    </div>
+                  </div>
+                </G>
+              )}
+            </div>) : (
+              /* CC1: cleaning inputs */
+              <div style={{ marginTop: 16 }}>
+                <G>
+                  <F l="1日の清掃回数" req v={form.cleaningTimesPerDay} set={v => s("cleaningTimesPerDay", v)} ph="2" sf="回/日" tp="number" />
+                  <F l="1回あたりの清掃時間" v={form.cleaningMinPerTime} set={v => s("cleaningMinPerTime", v)} ph="30" sf="分" tp="number" />
+                </G>
+                <div style={{ fontSize: 14, color: "#667788", marginTop: 6, fontStyle: "italic" }}>
+                  💡 CC1は掃除＋モップ＋吸引＋UV殺菌の4-in-1。人による清掃と比べて、同じ面積をムラなく均一に清掃します。
+                </div>
+              </div>
+            )}
+
+            {/* 営業担当用：PIN保護 */}
+            {salesMode ? (
+              <div style={{ marginTop: 16, padding: 12, background: "rgba(76,175,80,0.06)", borderRadius: 10, border: "1px solid rgba(76,175,80,0.2)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#4CAF50" }}>🔓 営業担当モード</div>
+                  <button onClick={() => { setSalesMode(false); setPinInput(""); }} style={{ padding: "4px 12px", borderRadius: 6, border: "1px solid #2A3A54", background: "transparent", color: "#667788", cursor: "pointer", fontSize: 12 }}>ロック</button>
+                </div>
+                <G>
+                  <F l={isT300 ? "T300 台数" : "CC1 台数"} v={isT300 ? form.t300Units : form.cc1Units} set={v => s(isT300 ? "t300Units" : "cc1Units", v)} ph="1" sf="台" tp="number" />
+                  {isT300 && <F l="専用架台（別途）" v={form.rackCost} set={v => s("rackCost", v)} ph="0" sf="万円" tp="number" />}
+                </G>
+                <div style={{ marginTop: 8, padding: 8, background: "rgba(0,188,212,0.06)", borderRadius: 6, fontSize: 14, color: "#AABBCC" }}>
+                  {isT300 ? "T300" : "CC1"} x {isT300 ? (form.t300Units || 1) : (form.cc1Units || 1)}台：本体{fm(roi.bodyPrice * roi.units)}円 ＋ 5年保守パック{fm(roi.maintPack * roi.units)}円{roi.rackPrice > 0 ? ` ＋ 架台${fm(roi.rackPrice)}円` : ""} ＝ <b style={{ color: "#00BCD4" }}>合計{fm(roi.robotCost)}円（税別）</b>
+                  <span style={{ display: "block", marginTop: 2, fontSize: 13, color: "#667788" }}>導入費（マッピング・設定）はサービス</span>
+                </div>
+              </div>
+            ) : (
+              <div style={{ marginTop: 16 }}>
+                {showPinBox ? (
+                  <div style={{ padding: 12, background: "rgba(76,175,80,0.06)", borderRadius: 10, border: "1px solid rgba(76,175,80,0.2)" }}>
+                    <div style={{ fontSize: 14, color: "#4CAF50", marginBottom: 8 }}>🔒 営業担当PINを入力</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input type="password" value={pinInput} onChange={e => setPinInput(e.target.value)} placeholder="PIN" maxLength={4}
+                        style={{ width: 100, background: "#0F1A30", border: "1px solid #2A3A54", borderRadius: 6, color: "#F7F5F0", padding: "8px 12px", fontSize: 18, textAlign: "center", letterSpacing: 8 }}
+                        onKeyDown={e => { if (e.key === "Enter" && pinInput === SALES_PIN) { setSalesMode(true); setShowPinBox(false); }}} />
+                      <button onClick={() => { if (pinInput === SALES_PIN) { setSalesMode(true); setShowPinBox(false); } else { setPinInput(""); }}}
+                        style={{ padding: "8px 20px", borderRadius: 6, border: "none", background: "#4CAF50", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 14 }}>解除</button>
+                      <button onClick={() => { setShowPinBox(false); setPinInput(""); }}
+                        style={{ padding: "8px 12px", borderRadius: 6, border: "1px solid #2A3A54", background: "transparent", color: "#667788", cursor: "pointer", fontSize: 14 }}>閉じる</button>
+                    </div>
+                    {pinInput.length >= 4 && pinInput !== SALES_PIN && <div style={{ fontSize: 13, color: "#FF5252", marginTop: 6 }}>PINが正しくありません</div>}
+                  </div>
+                ) : (
+                  <button onClick={() => setShowPinBox(true)} style={{ width: "100%", padding: "10px", borderRadius: 10, border: "1px dashed #2A3A54", background: "transparent", color: "#445566", cursor: "pointer", fontSize: 13 }}>
+                    🔒 営業担当モード（台数・価格設定）
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Realtime preview */}
+            <div style={{ marginTop: 12, padding: 12, background: "rgba(0,188,212,0.06)", borderRadius: 10, borderLeft: "3px solid #00BCD4" }}>
+              <div style={{ fontSize: 15, color: "#00BCD4", fontWeight: 700 }}>リアルタイム試算</div>
+              <div style={{ fontSize: 16, color: "#AABBCC", marginTop: 2 }}>
+                {isT300
+                  ? (isF
+                    ? `1日 ${roi.totalCalls}回の搬送 → エンジニアが${roi.fetchMinDay}分/日（${(roi.fetchMinDay/60).toFixed(1)}h）持ち場を離れています`
+                    : `1日 ${roi.fetchMinDay}分の搬送時間 → 年間 ${fm(roi.fetchHYear)}時間`)
+                  : `1日 ${roi.fetchMinDay}分の清掃時間 → 年間 ${fm(roi.fetchHYear)}時間をCC1が自動化`}
+              </div>
+            </div>
+          </div>}
+
+          {/* STEP 1: Pain + Cost inputs */}
+          {step === 1 && <div>
+            <ST n="02" t="お悩みとコスト構造" />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 6, marginBottom: 20 }}>
+              {PAIN_POINTS.map(p => {
+                const sel = form.pains.includes(p.id);
+                return (
+                  <button key={p.id} onClick={() => tp(p.id)} style={{
+                    padding: "10px 6px", borderRadius: 8, border: `2px solid ${sel ? "#FF9800" : "#2A3A54"}`,
+                    background: sel ? "rgba(255,152,0,0.08)" : "transparent",
+                    color: sel ? "#FF9800" : "#8899AA", cursor: "pointer", textAlign: "center"
+                  }}>
+                    <div style={{ fontSize: 27 }}>{p.icon}</div>
+                    <div style={{ fontSize: 15, fontWeight: sel ? 700 : 400, marginTop: 2 }}>{p.label}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Recruit cost - select */}
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 18, color: "#FF9800", fontWeight: 700, display: "block", marginBottom: 8 }}>LAYER 2 用：採用方法（1人あたりコスト）</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {RECRUIT_PRESETS.map(r => {
+                  const sel = form.recruitPreset === r.id;
+                  return (
+                    <button key={r.id} onClick={() => s("recruitPreset", r.id)} style={{
+                      flex: 1, padding: "10px 8px", borderRadius: 8, border: `2px solid ${sel ? "#FF9800" : "#2A3A54"}`,
+                      background: sel ? "rgba(255,152,0,0.08)" : "transparent", color: sel ? "#FF9800" : "#8899AA", cursor: "pointer", textAlign: "center"
+                    }}>
+                      <div style={{ fontSize: 18, fontWeight: 700 }}>{r.label}</div>
+                      <div style={{ fontSize: 21, fontWeight: 900, color: sel ? "#FF9800" : "#667788", marginTop: 2 }}>{fm(r.cost)}円</div>
+                      <div style={{ fontSize: 14, color: "#556677", marginTop: 2 }}>{r.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 14, color: "#556677", marginTop: 6, fontStyle: "italic" }}>
+                📊 出典：マイナビ「中途採用状況調査2025年版」（2024年実績）中途1人あたり平均約28.9万円。人材紹介は年収の30〜35%が相場。
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <F l="離職率" v={form.turnoverRate} set={v => s("turnoverRate", v)} ph="15" sf="%" tp="number" />
+                <div style={{ fontSize: 15, color: "#667788", marginTop: 4, lineHeight: 1.6 }}>
+                  💡 <b style={{ color: "#AABBCC" }}>離職率の考え方：</b>搬送スタッフ{form.staffCount || "○"}名のうち、1年間で何名が退職するかを率で入力。例：3名中1名が年間で辞める場合は約33%。中小製造業の平均離職率は約12〜15%（厚労省「雇用動向調査」2023年）。搬送・軽作業は平均より高い傾向があります。
+                </div>
+              </div>
+            </div>
+
+            {/* Value preset - select */}
+            <div>
+              <label style={{ fontSize: 18, color: "#7C4DFF", fontWeight: 700, display: "block", marginBottom: 8 }}>LAYER 3 用：スタッフの付加価値レベル</label>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                {VALUE_PRESETS.map(v => {
+                  const sel = form.valuePreset === v.id;
+                  return (
+                    <button key={v.id} onClick={() => s("valuePreset", v.id)} style={{
+                      padding: "10px 8px", borderRadius: 8, border: `2px solid ${sel ? "#7C4DFF" : "#2A3A54"}`,
+                      background: sel ? "rgba(124,77,255,0.08)" : "transparent", color: sel ? "#7C4DFF" : "#8899AA", cursor: "pointer", textAlign: "left"
+                    }}>
+                      <div style={{ fontSize: 18, fontWeight: 700 }}>{v.label}</div>
+                      {v.value > 0 && <div style={{ fontSize: 21, fontWeight: 900, color: sel ? "#7C4DFF" : "#667788", marginTop: 2 }}>{fm(v.value)}円/h</div>}
+                      <div style={{ fontSize: 14, color: "#556677", marginTop: 2 }}>{v.desc}</div>
+                    </button>
+                  );
+                })}
+              </div>
+              {form.valuePreset === "custom" && (
+                <div style={{ marginTop: 8 }}><F l="1時間あたり付加価値額" v={form.customValue} set={v => s("customValue", v)} ph="3000" sf="円/h" tp="number" /></div>
+              )}
+              <div style={{ fontSize: 15, color: "#556677", marginTop: 8, fontStyle: "italic" }}>
+                📊 出典：財務省「法人企業統計調査」2024年度 製造業労働生産性 995万円/年（全規模）、中小企業白書2025 労働分配率≈80%
+              </div>
+            </div>
+          </div>}
+
+          {/* STEP 2: Costs / LAYER 2 detail (optional, can skip) */}
+          {step === 2 && <div>
+            <ST n="03" t="ROI試算結果" s={`${form.companyName || "御社"}の投資対効果`} />
+            
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 16 }}>
+              <MC l="LAYER 1" t="コスト削減" v={`${fm(roi.l1)}円`} c="#00BCD4" />
+              <MC l="LAYER 2" t="見えないコスト" v={`${fm(roi.l2)}円`} c="#FF9800" />
+              <MC l="LAYER 3" t="人材の付加価値" v={`${fm(roi.l3)}円`} c="#7C4DFF" />
+            </div>
+
+            <div style={{ background: "linear-gradient(135deg, rgba(0,188,212,0.1), rgba(76,175,80,0.06))", borderRadius: 12, padding: 16, border: "1px solid rgba(0,188,212,0.3)", marginBottom: 20, textAlign: "center" }}>
+              <div style={{ fontSize: 15, color: "#00BCD4", fontWeight: 700, letterSpacing: 2 }}>年間トータル価値</div>
+              <div style={{ fontSize: 48, fontWeight: 900, color: "#00BCD4", margin: "4px 0" }}>{fm(roi.total)}<span style={{ fontSize: 21 }}>円/年</span></div>
+              {salesMode && roi.robotCost > 0 && (
+                <div style={{ fontSize: 17, color: "#8899AA" }}>
+                  投資総額 <b style={{ color: "#FF9800" }}>{fm(roi.robotCost)}円</b> → 投資回収 <b style={{ color: "#4CAF50" }}>{roi.brkMo}ヶ月</b>
+                  {roi.annualCost > 0 && <span> ｜ 年間コスト差引後 <b style={{ color: roi.total - roi.annualCost > 0 ? "#4CAF50" : "#FF5252" }}>{fm(roi.total - roi.annualCost)}円/年</b></span>}
+                </div>
+              )}
+            </div>
+
+            <FS t="LAYER 1：コスト削減（人件費＋社会保険料）" c="#00BCD4" fs={roi.l1_formulas} total={roi.l1} />
+            <FS t="LAYER 2：見えないコスト（採用・教育・離職）" c="#FF9800" fs={roi.l2_formulas} total={roi.l2} />
+            <FS t="LAYER 3：人材の付加価値創造" c="#7C4DFF" fs={roi.l3_formulas} total={roi.l3} />
+
+            <div style={{ background: "rgba(76,175,80,0.06)", borderRadius: 10, padding: 12, border: "1px solid rgba(76,175,80,0.2)", marginBottom: 16, fontSize: 17, color: "#AABBCC" }}>
+              <span style={{ fontWeight: 700, color: "#4CAF50" }}>💰 補助金：</span>
+              {`従業員${form.employeeCount}名 →「${roi.cat}」→ 省力化補助金 上限${fm(roi.sub)}万円（特例${fm(roi.subW)}万円）`}
+            </div>
+
+            {salesMode ? (
+              <div>
+                <button onClick={() => downloadProposal(form, roi, isF, isT300)} style={R.btn}>📄 提案書をダウンロード</button>
+                <div style={{ marginTop: 8, fontSize: 14, color: "#667788", textAlign: "center", lineHeight: 1.7 }}>
+                  HTMLファイルがダウンロードされます → ブラウザで開く → Ctrl+P（⌘+P）→「PDFに保存」
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: 20, background: "rgba(0,188,212,0.06)", borderRadius: 12, border: "1px solid rgba(0,188,212,0.15)" }}>
+                {sent ? (
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+                    <div style={{ fontSize: 18, color: "#4CAF50", fontWeight: 700, marginBottom: 6 }}>送信ありがとうございます！</div>
+                    <div style={{ fontSize: 15, color: "#8899AA" }}>診断結果に基づいた詳細な提案書を担当者より改めてお送りいたします。</div>
+                    <div style={{ marginTop: 10, fontSize: 15, color: "#00BCD4" }}>ニッシン・パーテクチュアル株式会社 ｜ TEL: 048-754-6511</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 17, color: "#00BCD4", fontWeight: 700, marginBottom: 10, textAlign: "center" }}>診断結果を担当者に送信する</div>
+                    <div style={{ fontSize: 14, color: "#8899AA", textAlign: "center", marginBottom: 16 }}>送信いただいた内容をもとに、御社専用のROI提案書を作成してお届けします。</div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                      <button onClick={sendEmail} style={{ flex: 1, padding: "14px", borderRadius: 8, border: "none", background: "#00BCD4", color: "#0F1A30", cursor: "pointer", fontWeight: 700, fontSize: 16 }}>
+                        📧 メールで送信
+                      </button>
+                      <button onClick={sendLINE} style={{ flex: 1, padding: "14px", borderRadius: 8, border: "none", background: "#06C755", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 16 }}>
+                        💬 LINEで送信
+                      </button>
+                    </div>
+                    <button onClick={copyURL} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #2A3A54", background: "transparent", color: "#8899AA", cursor: "pointer", fontSize: 14 }}>
+                      {copied ? "✅ コピーしました！" : "🔗 診断結果URLをコピー"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 16 }}>
+          {step > 0 ? <button onClick={() => setStep(s => s - 1)} style={R.back}>← 戻る</button> : <div />}
+          {step < 2 && <button onClick={() => setStep(s => s + 1)} disabled={!canNext()} style={{ ...R.next, background: canNext() ? "#00BCD4" : "#2A3A54", color: canNext() ? "#0F1A30" : "#556677", cursor: canNext() ? "pointer" : "default" }}>次へ →</button>}
+        </div>
+      </div>
+
+      <footer style={{ textAlign: "center", padding: 16, fontSize: 15, color: "#445566", borderTop: "1px solid #1A2744" }}>
+        ニッシン・パーテクチュアル株式会社 ｜ PUDU ROBOTICS 正規代理店 ｜ 048-754-6511
+      </footer>
+    </div>
+  );
+}
+
+/* ===== Formula Section ===== */
+function FS({ t, c, fs, total }) {
+  return (
+    <div style={{ background: "#0F1A30", borderRadius: 10, padding: 12, marginBottom: 12, borderLeft: `3px solid ${c}` }}>
+      <div style={{ fontSize: 18, fontWeight: 700, color: c, marginBottom: 8 }}>{t}</div>
+      {fs.map((f, i) => (
+        <div key={i} style={{ marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between" }}>
+            <div style={{ flex: 1 }}>
+              <span style={{ fontSize: 17, color: "#AABBCC" }}>{f.l}</span>
+              {f.f && <div style={{ fontSize: 15, color: "#556677", fontFamily: "monospace", marginTop: 1 }}>{f.f}</div>}
+              {f.n && <div style={{ fontSize: 14, color: "#667788", fontStyle: "italic", marginTop: 1 }}>📊 {f.n}</div>}
+            </div>
+            {f.r && <div style={{ fontSize: 18, fontWeight: 700, color: f.c ? c : "#AABBCC", whiteSpace: "nowrap", marginLeft: 8 }}>{f.r}</div>}
+          </div>
+          {i < fs.length - 1 && <div style={{ borderBottom: "1px solid #1A2744", marginTop: 5 }} />}
+        </div>
+      ))}
+      <div style={{ borderTop: `2px solid ${c}`, paddingTop: 6, marginTop: 4, display: "flex", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 16, fontWeight: 700, color: c }}>合計</span>
+        <span style={{ fontSize: 22, fontWeight: 900, color: c }}>{fm(total)}円/年</span>
+      </div>
+    </div>
+  );
+}
+
+/* ===== Proposal Print ===== */
+function generateProposalHTML(form, roi, isF, isT300) {
+  const d = new Date();
+  const ds = `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+  const vp = VALUE_PRESETS.find(v => v.id === form.valuePreset) || VALUE_PRESETS[2];
+  const rp = RECRUIT_PRESETS.find(r => r.id === form.recruitPreset) || RECRUIT_PRESETS[1];
+  const title = `${isT300 ? "搬送" : "清掃"}ロボット導入 ROI提案書${isT300 && isF ? "【工場・呼出しボタン方式】" : ""}`;
+
+  const layerHTML = (t, c, bg, formulas, total) => {
+    const rows = formulas.map(f => `
+      <tr><td style="padding:6px 0;border-bottom:1px solid #eee">
+        <div>${f.l}</div>
+        ${f.f ? `<div style="font-size:13px;color:#999;font-family:monospace">${f.f}</div>` : ""}
+        ${f.n ? `<div style="font-size:12px;color:#888;font-style:italic">📊 ${f.n}</div>` : ""}
+      </td><td style="padding:6px 0;border-bottom:1px solid #eee;text-align:right;font-weight:700;color:${f.c ? c : '#444'};white-space:nowrap">${f.r || ""}</td></tr>
+    `).join("");
+    return `
+      <div style="margin-bottom:24px">
+        <h3 style="font-size:15px;font-weight:900;border-left:4px solid #00BCD4;padding-left:10px;margin:0 0 10px">${t}</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:15px">${rows}</table>
+        <div style="background:${bg};border-radius:6px;padding:8px 12px;margin-top:8px;display:flex;justify-content:space-between;font-weight:700;color:${c}">
+          <span>合計</span><span style="font-size:18px">${fm(total)}円/年</span>
+        </div>
+      </div>`;
+  };
+
+  const factorySection = isT300 && isF ? `
+    <div style="margin-bottom:24px">
+      <h3 style="font-size:15px;font-weight:900;border-left:4px solid #00BCD4;padding-left:10px;margin:0 0 10px">呼出しボタン方式の導入効果</h3>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="background:#FFF3E0;border-radius:8px;padding:12px;font-size:14px">
+          <div style="font-weight:700;color:#E65100;margin-bottom:6px">現状</div>
+          エンジニアが持ち場を離れて材料を取りに行く → 往復＋積降ろし＋立ち話等で${form.fetchTimeMin}分/回 → 1日${roi.totalCalls}回で合計${roi.fetchMinDay}分
+        </div>
+        <div style="background:#E0F7FA;border-radius:8px;padding:12px;font-size:14px">
+          <div style="font-weight:700;color:#00838F;margin-bottom:6px">T300導入後</div>
+          エンジニアがボタンを押すだけ → T300が材料を自動搬送 → 機械は稼働し続ける → エンジニアは加工を続行
+        </div>
+      </div>
+    </div>` : "";
+
+  const investInfo = roi.robotCost > 0
+    ? `投資回収期間：${roi.brkMo}ヶ月 ｜ 年間コスト差引後：${fm(roi.total - roi.annualCost)}円/年`
+    : "※投資金額は別途ご提案いたします";
+
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${title} - ${form.companyName}様</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Noto Sans JP',sans-serif;color:#1A2744;background:#fff;line-height:1.7;font-size:15px}
+  .wrap{max-width:760px;margin:0 auto;padding:36px}
+  @media print{.no-print{display:none!important}body{font-size:13px}.wrap{padding:20px}}
+  .print-btn{position:fixed;top:16px;right:16px;padding:12px 24px;background:#00BCD4;color:#0F1A30;border:none;border-radius:8px;font-weight:900;font-size:15px;cursor:pointer;z-index:100;font-family:'Noto Sans JP',sans-serif}
+  .print-btn:hover{background:#00ACC1}
+</style>
+</head>
+<body>
+<button class="print-btn no-print" onclick="window.print()">🖨 このページをPDF保存（Ctrl+P）</button>
+<div class="wrap">
+  <div style="border-bottom:3px solid #00BCD4;padding-bottom:16px;margin-bottom:28px">
+    <div style="font-size:12px;color:#00BCD4;letter-spacing:3px;font-weight:700">PUDU ROBOTICS ROI PROPOSAL</div>
+    <h1 style="font-size:26px;font-weight:900;margin:6px 0">${title}</h1>
+    <div style="font-size:14px;color:#666">${ds} ｜ ${form.companyName} 様 ｜ 従業員${form.employeeCount}名</div>
+  </div>
+
+  ${factorySection}
+
+  ${layerHTML("LAYER 1：コスト削減（人件費＋社会保険料）", "#00838F", "#E0F7FA", roi.l1_formulas, roi.l1)}
+  ${layerHTML("LAYER 2：見えないコスト（採用・教育・離職）", "#E65100", "#FFF3E0", roi.l2_formulas, roi.l2)}
+  ${layerHTML("LAYER 3：人材の付加価値創造", "#4A148C", "#EDE7F6", roi.l3_formulas, roi.l3)}
+
+  <div style="background:#E0F7FA;border-radius:10px;padding:20px;text-align:center;border:2px solid #00BCD4;margin:24px 0">
+    <div style="font-size:12px;color:#00838F;font-weight:700;letter-spacing:2px">年間トータル価値</div>
+    <div style="font-size:36px;font-weight:900;color:#00838F">${fm(roi.total)}<span style="font-size:14px">円/年</span></div>
+    <div style="font-size:14px;color:#666">${investInfo} ｜ 補助金「${roi.cat}」上限${fm(roi.sub)}万円</div>
+  </div>
+
+  <div style="margin-bottom:24px">
+    <h3 style="font-size:15px;font-weight:900;border-left:4px solid #00BCD4;padding-left:10px;margin:0 0 10px">データソース・算出根拠</h3>
+    <div style="font-size:12px;color:#888;line-height:1.9">
+      <div>■ LAYER 1：お客様入力値に基づく実績ベース計算。搬送時間には移動・積降ろし・立ち話等を含む総時間。社会保険料は事業主負担の法定福利費率15%で加算（厚生労働省統計）。</div>
+      <div>■ LAYER 2 採用コスト：${rp.source}</div>
+      <div>■ LAYER 2 教育コスト：新人は教育期間中、既存社員の50%の生産性と想定（OJT中は指導者の生産性も低下するため保守的に設定）。</div>
+      <div>■ LAYER 2 退職に伴う組織コスト：退職手続き事務1.5万円＋引継ぎ期間の生産性低下2万円＋残メンバーの負荷増・士気低下1.5万円＝計5万円/人。</div>
+      <div>■ LAYER 3：${vp.label}の付加価値${fm(vp.value || form.customValue)}円/hは、財務省「法人企業統計調査」2024年度（製造業全規模 労働生産性995万円/年）及び中小企業白書2025に基づく推計値。</div>
+      <div>■ 補助金：中小企業省力化投資補助金（一般型）第6回公募要領（2026年3月13日公開）に基づく。</div>
+    </div>
+  </div>
+
+  <div style="margin-top:32px;border-top:3px solid #1A2744;padding-top:16px;text-align:center">
+    <div style="font-size:14px;color:#555">ロボット導入は「人を減らす」投資ではありません。「人の価値を最大化する」投資です。</div>
+    <div style="font-size:18px;font-weight:900;margin-top:12px">ニッシン・パーテクチュアル株式会社</div>
+    <div style="font-size:13px;color:#666">代表取締役 中村 稔 ｜ PUDU ROBOTICS 正規代理店 ｜ TEL: 048-754-6511 ｜ nakamura@pertechtual.co.jp</div>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+function downloadProposal(form, roi, isF, isT300) {
+  const html = generateProposalHTML(form, roi, isF, isT300);
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ROI提案書_${form.companyName || "御社"}_${new Date().toISOString().slice(0,10)}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ===== Shared Components ===== */
+function ST({ n, t, s }) {
+  return <div style={{ marginBottom: 18 }}><div style={{ display: "flex", alignItems: "baseline", gap: 6 }}><span style={{ fontSize: 42, fontWeight: 900, color: "#00BCD4", opacity: 0.25, fontFamily: "monospace" }}>{n}</span><h2 style={{ fontSize: 27, fontWeight: 900, margin: 0 }}>{t}</h2></div>{s && <p style={{ fontSize: 16, color: "#8899AA", margin: "2px 0 0" }}>{s}</p>}</div>;
+}
+function G({ children }) { return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>{children}</div>; }
+function F({ l, v, set, ph, sf, tp = "text", req, opts }) {
+  const b = { width: "100%", background: "#0F1A30", border: "1px solid #2A3A54", borderRadius: 6, color: "#F7F5F0", padding: "8px 10px", fontSize: 20, boxSizing: "border-box" };
+  return <div><label style={{ fontSize: 16, color: "#8899AA", display: "block", marginBottom: 3 }}>{l}{req && <span style={{ color: "#FF5252" }}> *</span>}</label><div style={{ position: "relative" }}><input type={tp === "number" ? "number" : "text"} value={v} onChange={e => set(e.target.value)} placeholder={ph} style={b} />{sf && <span style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", fontSize: 15, color: "#556677" }}>{sf}</span>}</div></div>;
+}
+function MC({ l, t, v, c }) {
+  return <div style={{ background: `${c}11`, borderRadius: 8, padding: 10, borderTop: `3px solid ${c}`, textAlign: "center" }}><div style={{ fontSize: 14, color: "#667788" }}>{l}</div><div style={{ fontSize: 16, fontWeight: 700, color: c }}>{t}</div><div style={{ fontSize: 24, fontWeight: 900, color: c }}>{v}</div></div>;
+}
+
+const R = {
+  root: { minHeight: "100vh", background: "#0F1A30", color: "#F7F5F0", fontFamily: "'Noto Sans JP','Helvetica Neue',sans-serif" },
+  hdr: { background: "linear-gradient(135deg,#0F1A30,#1A2744)", borderBottom: "3px solid #00BCD4", padding: "16px 0" },
+  hdrIn: { maxWidth: 760, margin: "0 auto", padding: "0 20px" },
+  logo: { width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,#00BCD4,#4CAF50)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 24 },
+  wrap: { maxWidth: 760, margin: "0 auto", padding: "24px 20px" },
+  card: { background: "#1A2744", borderRadius: 12, padding: "24px 20px", border: "1px solid #2A3A54", minHeight: 340 },
+  btn: { width: "100%", padding: "12px", borderRadius: 8, border: "none", background: "linear-gradient(135deg,#00BCD4,#4CAF50)", color: "#0F1A30", fontSize: 21, fontWeight: 900, cursor: "pointer" },
+  back: { padding: "8px 24px", borderRadius: 6, border: "1px solid #2A3A54", background: "transparent", color: "#8899AA", cursor: "pointer", fontSize: 18 },
+  next: { padding: "8px 32px", borderRadius: 6, border: "none", fontSize: 18, fontWeight: 700 },
+};
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
