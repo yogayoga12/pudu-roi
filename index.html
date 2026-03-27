@@ -24,7 +24,7 @@
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState } = React;
+const { useState, useEffect } = React;
 
 /* ===== Evidence-based presets ===== */
 /* Source: 財務省「法人企業統計調査」2024年度 製造業全規模 労働生産性995万円/年 ≈ 5,000円/h
@@ -189,19 +189,93 @@ function calc(f) {
 function fm(n) { return typeof n === "number" ? n.toLocaleString("ja-JP") : n; }
 
 /* ===== MAIN APP ===== */
+function encodeForm(f) {
+  const d = { ...f };
+  delete d.notes;  // 長文除外
+  return btoa(unescape(encodeURIComponent(JSON.stringify(d))));
+}
+function decodeForm(s) {
+  try { return JSON.parse(decodeURIComponent(escape(atob(s)))); } catch { return null; }
+}
+
 function App() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState(init);
   const [salesMode, setSalesMode] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [showPinBox, setShowPinBox] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [copied, setCopied] = useState(false);
   const SALES_PIN = "1973";
   const s = (k, v) => setForm(p => ({ ...p, [k]: v }));
   const tp = id => setForm(p => ({ ...p, pains: p.pains.includes(id) ? p.pains.filter(x => x !== id) : [...p.pains, id] }));
+
+  // URL復元（みのたんがリンクを開いた時に入力データを復元）
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const d = params.get("d");
+    if (d) {
+      const restored = decodeForm(d);
+      if (restored) {
+        setForm(p => ({ ...p, ...restored }));
+        setStep(2);  // 直接ROI結果画面へ
+        window.history.replaceState({}, "", window.location.pathname);  // URLパラメータをクリア
+      }
+    }
+  }, []);
+
   const roi = calc(form);
   const isF = form.facilityType === "factory";
   const isT300 = form.robotType === "t300";
   const STEPS = ["基本情報", "お悩み・コスト", "ROI結果"];
+
+  // 診断結果URL生成
+  const getResultURL = () => {
+    const base = window.location.origin + window.location.pathname;
+    return base + "?d=" + encodeForm(form);
+  };
+
+  // メール送信（mailto）
+  const sendEmail = () => {
+    const url = getResultURL();
+    const subject = `【ROI診断結果】${form.companyName} 様`;
+    const body = [
+      `【ROI診断結果が届きました】`,
+      ``,
+      `会社名：${form.companyName}`,
+      `担当者：${form.contactName}`,
+      `従業員数：${form.employeeCount}名`,
+      `ロボット：${isT300 ? "T300 搬送ロボット" : "CC1 清掃ロボット"}`,
+      isT300 ? `施設：${isF ? "工場（呼出しボタン方式）" : "倉庫・店舗"}` : "",
+      ``,
+      `■ ROI試算結果`,
+      `LAYER 1（コスト削減）：${fm(roi.l1)}円/年`,
+      `LAYER 2（見えないコスト）：${fm(roi.l2)}円/年`,
+      `LAYER 3（人材の付加価値）：${fm(roi.l3)}円/年`,
+      `年間トータル価値：${fm(roi.total)}円/年`,
+      ``,
+      `■ 入力データ復元URL（クリックで開く）`,
+      url,
+      ``,
+      `↑このURLを開くとお客様の入力データが復元されます。`,
+      `PIN（1973）を入力 → 台数・架台を設定 → 提案書をダウンロード`,
+    ].filter(Boolean).join("\n");
+    window.open(`mailto:nakamura@pertechtual.co.jp?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`);
+    setSent(true);
+  };
+
+  // LINEで送信
+  const sendLINE = () => {
+    const url = getResultURL();
+    const text = `【ROI診断結果】${form.companyName}様\nL1:${fm(roi.l1)}円 L2:${fm(roi.l2)}円 L3:${fm(roi.l3)}円\n合計:${fm(roi.total)}円/年\n\n復元URL:\n${url}`;
+    window.open(`https://line.me/R/share?text=${encodeURIComponent(text)}`);
+    setSent(true);
+  };
+
+  // URLコピー
+  const copyURL = () => {
+    navigator.clipboard.writeText(getResultURL()).then(() => { setCopied(true); setTimeout(() => setCopied(false), 3000); });
+  };
 
   const canNext = () => {
     if (step === 0) return form.companyName && form.employeeCount && form.staffCount && (isT300 ? (isF ? form.machineCount : form.dailyOrders) : form.cleaningTimesPerDay);
@@ -504,11 +578,31 @@ function App() {
                 </div>
               </div>
             ) : (
-              <div style={{ textAlign: "center", padding: 16, background: "rgba(0,188,212,0.06)", borderRadius: 10, border: "1px solid rgba(0,188,212,0.15)" }}>
-                <div style={{ fontSize: 17, color: "#00BCD4", fontWeight: 700, marginBottom: 6 }}>診断結果は以上です</div>
-                <div style={{ fontSize: 14, color: "#8899AA" }}>ROI試算に基づいた詳細な提案書は、担当者より改めてご提出いたします。</div>
-                <div style={{ fontSize: 14, color: "#8899AA", marginTop: 4 }}>ご不明点がございましたらお気軽にお問い合わせください。</div>
-                <div style={{ marginTop: 10, fontSize: 15, color: "#00BCD4" }}>TEL: 048-754-6511 ｜ nakamura@pertechtual.co.jp</div>
+              <div style={{ padding: 20, background: "rgba(0,188,212,0.06)", borderRadius: 12, border: "1px solid rgba(0,188,212,0.15)" }}>
+                {sent ? (
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 36, marginBottom: 8 }}>✅</div>
+                    <div style={{ fontSize: 18, color: "#4CAF50", fontWeight: 700, marginBottom: 6 }}>送信ありがとうございます！</div>
+                    <div style={{ fontSize: 15, color: "#8899AA" }}>診断結果に基づいた詳細な提案書を担当者より改めてお送りいたします。</div>
+                    <div style={{ marginTop: 10, fontSize: 15, color: "#00BCD4" }}>ニッシン・パーテクチュアル株式会社 ｜ TEL: 048-754-6511</div>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ fontSize: 17, color: "#00BCD4", fontWeight: 700, marginBottom: 10, textAlign: "center" }}>診断結果を担当者に送信する</div>
+                    <div style={{ fontSize: 14, color: "#8899AA", textAlign: "center", marginBottom: 16 }}>送信いただいた内容をもとに、御社専用のROI提案書を作成してお届けします。</div>
+                    <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                      <button onClick={sendEmail} style={{ flex: 1, padding: "14px", borderRadius: 8, border: "none", background: "#00BCD4", color: "#0F1A30", cursor: "pointer", fontWeight: 700, fontSize: 16 }}>
+                        📧 メールで送信
+                      </button>
+                      <button onClick={sendLINE} style={{ flex: 1, padding: "14px", borderRadius: 8, border: "none", background: "#06C755", color: "#fff", cursor: "pointer", fontWeight: 700, fontSize: 16 }}>
+                        💬 LINEで送信
+                      </button>
+                    </div>
+                    <button onClick={copyURL} style={{ width: "100%", padding: "10px", borderRadius: 8, border: "1px solid #2A3A54", background: "transparent", color: "#8899AA", cursor: "pointer", fontSize: 14 }}>
+                      {copied ? "✅ コピーしました！" : "🔗 診断結果URLをコピー"}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>}
