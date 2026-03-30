@@ -271,13 +271,12 @@ function App() {
       };
       const res = await fetch(GAS_URL, {
         method: "POST",
+        mode: "no-cors",
+        headers: { "Content-Type": "text/plain" },
         body: JSON.stringify(payload),
       });
-      if (res.ok) {
-        setSent(true);
-      } else {
-        setSendError("送信に失敗しました。もう一度お試しください。");
-      }
+      // no-cors ではレスポンスを読めないので、エラーが出なければ成功とみなす
+      setSent(true);
     } catch (err) {
       setSendError("通信エラーが発生しました。もう一度お試しください。");
     }
