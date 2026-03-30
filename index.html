@@ -241,46 +241,48 @@ function App() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState("");
 
-  const submitResult = async () => {
-    if (GAS_URL === "YOUR_GAS_URL_HERE") {
-      // GAS未設定時のフォールバック：クリップボードコピー
-      const text = [
-        `【ROI診断結果】${form.companyName}様`,
-        `担当者：${form.contactName || ""}`,
-        `従業員：${form.employeeCount}名`,
-        `ロボット：${isT300 ? "T300" : "CC1"}`,
-        `L1:${fm(roi.l1)} L2:${fm(roi.l2)} L3:${fm(roi.l3)}`,
-        `合計：${fm(roi.total)}円/年`,
-        `復元URL：${getResultURL()}`
-      ].join("\n");
-      await navigator.clipboard.writeText(text);
-      setSent(true);
-      return;
-    }
-
+  const submitResult = () => {
     setSending(true);
     setSendError("");
-    try {
-      const payload = {
-        ...form,
-        roi_l1: roi.l1,
-        roi_l2: roi.l2,
-        roi_l3: roi.l3,
-        roi_total: roi.total,
-        submitted_at: new Date().toISOString(),
-      };
-      const res = await fetch(GAS_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "text/plain" },
-        body: JSON.stringify(payload),
-      });
-      // no-cors ではレスポンスを読めないので、エラーが出なければ成功とみなす
-      setSent(true);
-    } catch (err) {
-      setSendError("通信エラーが発生しました。もう一度お試しください。");
-    }
+
+    const payload = {
+      ...form,
+      roi_l1: roi.l1,
+      roi_l2: roi.l2,
+      roi_l3: roi.l3,
+      roi_total: roi.total,
+      submitted_at: new Date().toISOString(),
+    };
+
+    // 隠しiframe + フォーム送信（CORS回避の確実な方法）
+    const iframeName = "gas_submit_" + Date.now();
+    const iframe = document.createElement("iframe");
+    iframe.name = iframeName;
+    iframe.style.display = "none";
+    document.body.appendChild(iframe);
+
+    const f = document.createElement("form");
+    f.method = "POST";
+    f.action = GAS_URL;
+    f.target = iframeName;
+
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "data";
+    input.value = JSON.stringify(payload);
+    f.appendChild(input);
+
+    document.body.appendChild(f);
+    f.submit();
+    document.body.removeChild(f);
+
+    // 送信完了とみなす（iframeは数秒後に除去）
+    setTimeout(() => {
+      try { document.body.removeChild(iframe); } catch(e) {}
+    }, 10000);
+
     setSending(false);
+    setSent(true);
   };
 
   const canNext = () => {
