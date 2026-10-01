@@ -103,7 +103,7 @@ callout('co_19', '19', '社員数（名）')
 callout('co_14', '1.4', '平均ロット（個）｜超多品種少量', RED)
 callout('co_1500', '1,500+', '生成AIセミナー 累計受講者', VIOLET, x=1060)
 callout('co_98', '98%', 'セミナー満足度', VIOLET, x=1060, y=560)
-callout('co_20', '+20%', '搬送ロボット導入で生産量アップ', GREEN, x=1100, y=340)
+callout('co_20', '+20%', '搬送を自動化した工程の生産量', GREEN, x=1100, y=340)
 callout('co_f14', 'FLIGHT 14', '初の地球周回軌道に到達', CYAN, x=1000, y=260, bigsize=110)
 callout('co_26', '×26', '新型Starlink衛星を軌道へ', CYAN, x=1100, y=300)
 
