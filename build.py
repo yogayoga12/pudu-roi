@@ -157,7 +157,7 @@ def build(seg):
     fc.append(f"{last}format=yuv420p[vout]")
     NF = int(round(total * FPS)); NS = int(round(total * 48000))
     fc.append(f"[1:a]aresample=48000,aformat=sample_fmts=s16:channel_layouts=stereo,apad=whole_len={NS},atrim=end_sample={NS},asetpts=PTS-STARTPTS[aout]")
-    sh(f"ffmpeg -v error -y -i {base} {audio_in} {inputs} -filter_complex \"{';'.join(fc)}\" -map '[vout]' -map '[aout]' -frames:v {NF} {ENC} -c:a pcm_s16le -ar 48000 {out}")
+    sh(f"ffmpeg -v error -y -i {base} {audio_in} {inputs} -filter_complex \"{';'.join(fc)}\" -map '[vout]' -map '[aout]' -t {total:.6f} {ENC} -c:a pcm_s16le -ar 48000 {out}")
     seg['_total'] = total
     return seg
 
