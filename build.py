@@ -187,7 +187,7 @@ def build(seg):
     return seg
 
 segs = SPEC['segments']
-with ThreadPoolExecutor(6) as ex: segs = list(ex.map(build, segs))
+with ThreadPoolExecutor(3) as ex: segs = list(ex.map(build, segs))
 
 # ---------- subtitles (ASS) ----------
 def ts(t):
