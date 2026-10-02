@@ -185,6 +185,12 @@ credit('cr_front', '写真：Steve Jurvetson / CC BY 2.0 / Wikimedia Commons')
 credit('cr_cc0', '写真：JustAnotherCarDesigner / CC0 / Wikimedia Commons')
 credit('cr_ceo', '写真：ニッシン・パーテクチュアル')
 credit('cr_site', '写真：ニッシン・パーテクチュアル（pertechtual.co.jp）')
+credit('cr_torx', '写真：Disturbx / CC BY-SA 4.0 / Wikimedia Commons ※圧造ねじの一例')
+credit('cr_hex', '写真：R. Henrik Nilsson / CC BY 4.0 / Wikimedia Commons ※冷間圧造ボルトの一例')
+credit('cr_a4', '写真：Asurnipal / CC BY-SA 4.0 / Wikimedia Commons ※ねじ製品の一例')
+credit('cr_gf', '画像：GF Machining Solutions 製品写真（当社Webサイト掲載）')
+credit('cr_pudu', '製品画像：PUDU Robotics（当社は販売代理店）')
+credit('cr_ceo2', '写真：ニッシン・パーテクチュアル（自社工場前・取扱ロボットとともに）')
 credit('cr_ift3', '実写映像：jackyuan08 / CC BY 3.0 / Wikimedia Commons ※2024年 第3回試験飛行の映像です')
 credit('cr_ft11', '写真：Shujianyang / CC BY-SA 4.0 / Wikimedia Commons ※2025年 第11回試験飛行')
 credit('cr_ift5', '実写映像：Anne Toal / CC BY 3.0 / Wikimedia Commons ※2024年 第5回試験飛行の映像です')
@@ -224,10 +230,11 @@ def ending():
               'Meta（Muse 2026.9.8／Muse for Small Business 9.29）｜Tesla Cybercab（2026.9.3 運行開始）｜SpaceX Starship Flight 14（2026.9.28）',
               'Cybercab写真：Wikimedia Commons（Daniel Lu CC BY-SA 4.0／Steve Jurvetson CC BY 2.0／JustAnotherCarDesigner CC0）',
               'Starship実写：Wikimedia Commons（jackyuan08・Anne Toal CC BY 3.0／Shujianyang CC BY-SA 4.0／NASA Public domain）※過去の試験飛行',
+              'ねじ・ボルト写真：Wikimedia Commons（Disturbx・Asurnipal CC BY-SA 4.0／R. Henrik Nilsson CC BY 4.0）｜ロボット製品画像：PUDU Robotics',
               '※実写表記のない映像はAI生成のイメージです。内容は2026年10月1日時点の公開情報にもとづきます。',
               '※Nina（ニーナ）はニッシン・パーテクチュアルの公式AIアンバサダーで、生成AIで制作されています。',
               '音声：ElevenLabs Eleven v4　映像：Higgsfield（Nano Banana／Wan 2.7／Seedance 2.5）　監修：代表取締役 中村 稔']:
-        w, _ = tw(d, s, fs); d.text(((W - w) // 2, y), s, font=fs, fill=(205, 215, 228)); y += 42
+        w, _ = tw(d, s, fs); d.text(((W - w) // 2, y), s, font=fs, fill=(205, 215, 228)); y += 39
     f2 = F(EN, 34); t = '#Nina  #ニーナの工場  #今日も新しく  #ニッシンパーテクチュアル'
     f2 = F(JP, 34); w, _ = tw(d, t, f2); d.text(((W - w) // 2, 860), t, font=f2, fill=CYAN)
     t = 'pertechtual.co.jp'; f3 = F(EN, 40); w, _ = tw(d, t, f3); d.text(((W - w) // 2, 930), t, font=f3, fill=WHITE)

@@ -26,6 +26,7 @@ def fetch(k):
     if not os.path.exists(p): sh(f"curl -sfL -A 'Mozilla/5.0 (compatible; NinaNewsVideo/1.0; +https://pertechtual.co.jp)' -o {p} '{url}'")
     return p
 with ThreadPoolExecutor(12) as ex: PATHS = dict(zip(ASSETS, ex.map(fetch, ASSETS)))
+RAWP = dict(PATHS)
 
 def dur(p): return float(sh(f"ffprobe -v error -show_entries format=duration -of csv=p=0 {p}").strip())
 
@@ -81,7 +82,26 @@ def prep_still(k, p):
         fw = 1760; fh = int(fw / ar); fg = im.resize((fw, fh), Image.LANCZOS); bg.paste(fg, (80, (1080 - fh) // 2))
     out = f'a/{k}_169.png'; bg.save(out); return out
 for _k, _p in list(PATHS.items()):
-    if _p.lower().endswith(('.png', '.jpg', '.jpeg')): PATHS[_k] = prep_still(_k, _p)
+    if _p.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')): PATHS[_k] = prep_still(_k, _p)
+
+# ---- robot lineup collage: SPEC['collages'] = {key: {'title':..., 'items': [[asset_key, label], ...]}}
+from PIL import ImageDraw, ImageFont
+def collage(key, cfg):
+    W2, H2 = 1920, 1080; bg = Image.new('RGB', (W2, H2), (12, 20, 38)); d = ImageDraw.Draw(bg)
+    fj = ImageFont.truetype('f/jp.ttf', 54); fl = ImageFont.truetype('f/jp.ttf', 34)
+    d.text((80, 50), cfg['title'], font=fj, fill=(255, 255, 255)); d.rectangle([80, 125, 300, 131], fill=(230, 0, 18))
+    items = cfg['items']; cols = 4; rows = (len(items) + cols - 1) // cols
+    cw, ch = (W2 - 160) // cols, (H2 - 210) // rows
+    for i, (k, lab) in enumerate(items):
+        im = Image.open(RAW[k]).convert('RGBA'); x0 = 80 + (i % cols) * cw; y0 = 170 + (i // cols) * ch
+        card = Image.new('RGB', (cw - 24, ch - 24), (240, 243, 248)); im.thumbnail((cw - 44, ch - 90))
+        card.paste(im, ((cw - 24 - im.width) // 2, 10 + (ch - 100 - im.height) // 2), im)
+        dc = ImageDraw.Draw(card); tw = dc.textlength(lab, font=fl); dc.text(((cw - 24 - tw) / 2, ch - 24 - 58), lab, font=fl, fill=(15, 26, 48))
+        bg.paste(card, (x0, y0))
+    out = f'a/{key}_169.png'; bg.save(out); return out
+RAW = RAWP
+for _ck, _cfg in SPEC.get('collages', {}).items(): PATHS[_ck] = collage(_ck, _cfg)
+
 
 def face_cx(video):
     try:
@@ -131,7 +151,10 @@ def build(seg):
         else:
             times = chunk_times(aud, [len(c[1]) for c in seg['subs']], 0)
             seg['_ct'] = times
-            starts = [0.0] + [times[s[1]][0] for s in seg['shots'][1:]] + [total]
+            def _st(s):
+                t = times[s[1]]
+                return t[0] + (s[2] * (t[1] - t[0]) if len(s) > 2 else 0)
+            starts = [0.0] + [_st(s) for s in seg['shots'][1:]] + [total]
             parts = []
             for i, s in enumerate(seg['shots']):
                 d = max(0.5, starts[i + 1] - starts[i]); pp = f"s/{sid}_{i}.mp4"; shot(s[0], d, pp, i); parts.append(pp)
@@ -146,6 +169,8 @@ def build(seg):
     def T(v):
         if isinstance(v, (int, float)): return float(v)
         if v == 'end': return total
+        if '.' in v[1:]:
+            i, f = v[1:].split('.'); i = int(i); return ct[i][0] + float('0.' + f) * (ct[i][1] - ct[i][0])
         return ct[int(v[1:])][0]
     ovs = [[o[0][:-1] + '_' + seg.get('_side', 'R')] + o[1:] if o[0].endswith('@') else o for o in seg.get('ov', [])]
     inputs = ' '.join(f"-loop 1 -framerate 30 -t {total:.3f} -i g/{o[0]}.png" for o in ovs)
